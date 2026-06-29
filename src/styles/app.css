@@ -377,3 +377,57 @@ input, textarea { font-family: inherit; }
 .gantt-rows { position: relative; z-index: 1; }
 .gantt-grid-header { z-index: 2; }
 
+/* ---------------- AUTH SCREEN ---------------- */
+.login-wrapper {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-surface); z-index: 9999;
+}
+.login-card {
+  width: 100%; max-width: 400px; padding: 32px; border-radius: var(--r-lg);
+  background: var(--bg-surface-2); border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg), 0 0 40px rgba(0, 0, 0, 0.2);
+}
+.auth-error.hidden { display: none; }
+
+/* ---------------- USER PROFILE BADGE ---------------- */
+.user-profile-badge {
+  display: flex; align-items: center; gap: 12px; padding: 12px;
+  background: var(--bg-surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-md); margin-bottom: 12px;
+}
+.up-avatar {
+  width: 32px; height: 32px; border-radius: 50%; background: var(--border-strong);
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.up-info { display: flex; flex-direction: column; gap: 2px; }
+.up-name { font-size: 13.5px; font-weight: 700; color: var(--text-strong); }
+.up-role { font-size: 10.5px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ---------------- SIDEBAR NAV ---------------- */
+.sidebar-nav { display: flex; flex-direction: column; gap: 4px; margin-bottom: auto; }
+.nav-item {
+  display: flex; align-items: center; padding: 10px 14px; border-radius: var(--r-md);
+  font-size: 13.5px; font-weight: 700; color: var(--text-strong); cursor: pointer;
+  transition: all 0.16s var(--ease);
+}
+.nav-item:hover { background: var(--bg-surface-2); }
+.nav-item.active { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------------- SETTINGS PAGE ---------------- */
+.settings-wrap { padding: 32px; max-width: 900px; margin: 0 auto; width: 100%; }
+.settings-container { display: flex; flex-direction: column; gap: 24px; }
+.settings-card {
+  background: var(--bg-surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 24px;
+}
+.settings-card h2 { font-size: 18px; font-weight: 800; margin-bottom: 20px; color: var(--text-strong); }
+.profile-detail { display: flex; flex-direction: column; gap: 12px; }
+.pd-row { display: flex; gap: 12px; font-size: 14px; color: var(--text); }
+.pd-row strong { width: 100px; color: var(--text-muted); }
+
+.users-table tr:hover { background: rgba(255, 255, 255, 0.015); }
+.btn-table-success { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+.btn-table-warn { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
+.btn-table-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+
+

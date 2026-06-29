@@ -192,6 +192,89 @@ async function registerIpcHandlers(ipcMain, getWindow) {
     return true;
   });
 
+  // ---------------- AUTENTIKASI & USER MANAGEMENT ----------------
+  ipcMain.handle('auth:login', async (_e, { username, password }) => {
+    const hash = db.hashPassword(password);
+    if (db.mode === 'neon') {
+      const rows = await db.sql('SELECT * FROM users WHERE username=$1', [username]);
+      const user = rows[0];
+      if (!user) throw new Error('Username tidak ditemukan');
+      if (user.password_hash !== hash) throw new Error('Password salah');
+      if (!user.approved) throw new Error('Akun Anda belum disetujui oleh admin');
+      return { id: user.id, username: user.username, role: user.role, approved: user.approved };
+    } else {
+      const user = db.local.users.find(u => u.username === username);
+      if (!user) throw new Error('Username tidak ditemukan');
+      if (user.password_hash !== hash) throw new Error('Password salah');
+      if (!user.approved) throw new Error('Akun Anda belum disetujui oleh admin');
+      return { id: user.id, username: user.username, role: user.role, approved: user.approved };
+    }
+  });
+
+  ipcMain.handle('auth:register', async (_e, { username, password }) => {
+    const hash = db.hashPassword(password);
+    if (db.mode === 'neon') {
+      const exists = await db.sql('SELECT id FROM users WHERE username=$1', [username]);
+      if (exists.length) throw new Error('Username sudah digunakan');
+      const r = await db.sql('INSERT INTO users (username, password_hash, role, approved) VALUES ($1, $2, $3, $4) RETURNING *', [username, hash, 'user', false]);
+      return r[0];
+    } else {
+      const exists = db.local.users.some(u => u.username === username);
+      if (exists) throw new Error('Username sudah digunakan');
+      const user = { id: db.nextId(), username, password_hash: hash, role: 'user', approved: false, created_at: new Date().toISOString() };
+      db.local.users.push(user);
+      db.saveLocal();
+      return user;
+    }
+  });
+
+  ipcMain.handle('users:list', async () => {
+    if (db.mode === 'neon') {
+      return await db.sql('SELECT id, username, role, approved, created_at FROM users ORDER BY id DESC');
+    }
+    return db.local.users.map(u => ({ id: u.id, username: u.username, role: u.role, approved: u.approved, created_at: u.created_at })).sort((a, b) => Number(b.id) - Number(a.id));
+  });
+
+  ipcMain.handle('users:approve', async (_e, { id, approved }) => {
+    if (db.mode === 'neon') {
+      await db.sql('UPDATE users SET approved=$1 WHERE id=$2', [approved, id]);
+    } else {
+      const user = db.local.users.find(u => u.id === id);
+      if (user) {
+        user.approved = approved;
+        db.saveLocal();
+      }
+    }
+    return true;
+  });
+
+  ipcMain.handle('users:create', async (_e, { username, password, role }) => {
+    const hash = db.hashPassword(password);
+    if (db.mode === 'neon') {
+      const exists = await db.sql('SELECT id FROM users WHERE username=$1', [username]);
+      if (exists.length) throw new Error('Username sudah digunakan');
+      const r = await db.sql('INSERT INTO users (username, password_hash, role, approved) VALUES ($1, $2, $3, $4) RETURNING *', [username, hash, role, true]);
+      return r[0];
+    } else {
+      const exists = db.local.users.some(u => u.username === username);
+      if (exists) throw new Error('Username sudah digunakan');
+      const user = { id: db.nextId(), username, password_hash: hash, role, approved: true, created_at: new Date().toISOString() };
+      db.local.users.push(user);
+      db.saveLocal();
+      return user;
+    }
+  });
+
+  ipcMain.handle('users:delete', async (_e, { id }) => {
+    if (db.mode === 'neon') {
+      await db.sql('DELETE FROM users WHERE id=$1', [id]);
+    } else {
+      db.local.users = db.local.users.filter(u => u.id !== id);
+      db.saveLocal();
+    }
+    return true;
+  });
+
   // ---------------- SCHEDULING ----------------
   ipcMain.handle('cards:upcoming', async () => {
     if (db.mode === 'neon') {

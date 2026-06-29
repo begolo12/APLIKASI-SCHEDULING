@@ -37,3 +37,12 @@ CREATE INDEX IF NOT EXISTS idx_lists_board ON lists(board_id);
 CREATE INDEX IF NOT EXISTS idx_cards_list ON cards(list_id);
 CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due_at);
 CREATE INDEX IF NOT EXISTS idx_cards_parent ON cards(parent_id);
+
+CREATE TABLE IF NOT EXISTS users (
+  id BIGSERIAL PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user',
+  approved BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

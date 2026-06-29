@@ -7,16 +7,19 @@ import { renderCalendar } from './components/calendar.js';
 import { renderGantt } from './components/gantt.js';
 
 // ---------------- State ----------------
+const savedUser = typeof localStorage !== 'undefined' ? localStorage.getItem('flowboard-user') : null;
 const state = {
   boards: [],
   activeBoardId: null,
   lists: [],
   cards: [],
-  view: 'board', // 'board' | 'calendar' | 'gantt'
+  view: 'board', // 'board' | 'calendar' | 'gantt' | 'settings'
   search: '',
   dbMode: 'local',
   saveStatus: 'saved',
-  saveError: ''
+  saveError: '',
+  user: savedUser ? JSON.parse(savedUser) : null,
+  usersList: []
 };
 
 const app = document.getElementById('app');
@@ -65,14 +68,31 @@ function renderSidebar() {
       <div class="side-label">Papan</div>
       <div id="board-list">
         ${state.boards.map(b => `
-          <div class="board-item ${b.id === state.activeBoardId ? 'active' : ''}" data-id="${b.id}">
+          <div class="board-item ${b.id === state.activeBoardId && state.view !== 'settings' ? 'active' : ''}" data-id="${b.id}">
             <span class="dot"></span>
             <span class="bi-title">${escapeHtml(b.title)}</span>
             <span class="del" data-del-board="${b.id}" title="Hapus papan">🗑</span>
           </div>`).join('')}
       </div>
       <button class="add-board" id="add-board">+ Papan baru</button>
+
+      <div class="side-label" style="margin-top: 24px;">Menu</div>
+      <div class="sidebar-nav">
+        <div class="nav-item ${state.view === 'settings' ? 'active' : ''}" id="nav-settings">
+          <span style="margin-right:8px;">⚙️</span> Pengaturan
+        </div>
+      </div>
+
       <div class="sidebar-footer">
+        ${state.user ? `
+        <div class="user-profile-badge">
+          <div class="up-avatar">👤</div>
+          <div class="up-info">
+            <div class="up-name">${escapeHtml(state.user.username)}</div>
+            <div class="up-role">${state.user.role === 'admin' ? 'Super Admin' : 'Anggota'}</div>
+          </div>
+        </div>
+        ` : ''}
         <div class="db-badge">
           <span class="led ${state.dbMode === 'neon' ? 'neon' : 'local'}"></span>
           ${state.dbMode === 'neon' ? 'Neon Postgres' : (state.dbMode === 'mock' ? 'Preview (browser)' : 'Penyimpanan lokal')}
@@ -83,6 +103,13 @@ function renderSidebar() {
 }
 
 function renderTopbar() {
+  if (state.view === 'settings') {
+    return `
+      <header class="topbar">
+        <h1>Pengaturan Aplikasi</h1>
+      </header>
+    `;
+  }
   const board = state.boards.find(b => b.id === state.activeBoardId);
   return `
     <header class="topbar">
@@ -127,6 +154,11 @@ async function persist(action) {
 
 function renderContent() {
   const content = document.getElementById('content');
+  if (state.view === 'settings') {
+    content.className = 'settings-wrap';
+    renderSettings(content);
+    return;
+  }
   if (state.view === 'calendar') {
     content.className = 'calendar-wrap';
     renderCalendar(content, state.cards, openCardById);
@@ -364,6 +396,17 @@ function bindSidebar() {
     });
   });
 
+  const settingsEl = document.getElementById('nav-settings');
+  if (settingsEl) {
+    settingsEl.onclick = async () => {
+      state.view = 'settings';
+      if (state.user.role === 'admin') {
+        state.usersList = await api.getUsers();
+      }
+      render();
+    };
+  }
+
   document.querySelectorAll('[data-del-board]').forEach(el => {
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -385,6 +428,7 @@ function bindSidebar() {
     const board = await api.createBoard(title);
     state.boards.push(board);
     state.activeBoardId = board.id;
+    state.view = 'board';
     await loadActiveBoard();
     render();
   });
@@ -428,10 +472,242 @@ async function boot() {
     state.dbMode = status.mode;
   } catch { state.dbMode = 'local'; }
 
+  if (!state.user) {
+    renderLogin();
+    return;
+  }
+
   await loadBoards();
   await loadActiveBoard();
   render();
   startReminderLoop();
+}
+
+function renderLogin() {
+  app.innerHTML = `
+    <div class="login-wrapper">
+      <div class="login-card">
+        <div class="brand" style="margin-bottom: 24px; justify-content: center;">
+          <div class="brand-logo">🗂️</div>
+          <div class="brand-name">Flow<span>Board</span></div>
+        </div>
+        <h2 id="auth-title" style="font-size: 20px; font-weight: 700; margin-bottom: 16px; text-align: center; color: var(--text-strong)">Masuk ke Akun</h2>
+        <div id="auth-error" class="auth-error hidden" style="color: var(--danger); background: rgba(239,68,68,0.08); padding: 10px 12px; border-radius: var(--r-md); font-size:12.5px; font-weight:600; margin-bottom: 16px; border: 1px solid rgba(239,68,68,0.18)"></div>
+        <form id="auth-form" style="display:flex; flex-direction:column; gap:16px;">
+          <div class="field" style="margin-bottom:0;">
+            <label for="auth-user" style="font-size:12px; margin-bottom:6px; display:block; color:var(--text-muted)">Username</label>
+            <input id="auth-user" type="text" placeholder="Masukkan username" required autocomplete="username" style="width:100%; padding:10px 12px; font-size:14px; background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-md); color:var(--text); outline:none;" />
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label for="auth-pass" style="font-size:12px; margin-bottom:6px; display:block; color:var(--text-muted)">Password</label>
+            <input id="auth-pass" type="password" placeholder="Masukkan password" required autocomplete="current-password" style="width:100%; padding:10px 12px; font-size:14px; background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-md); color:var(--text); outline:none;" />
+          </div>
+          <button type="submit" class="btn btn-primary" style="width: 100%; padding: 11px; margin-top: 8px; font-size:14px; font-weight:700;" id="auth-submit">Masuk</button>
+        </form>
+        <div class="auth-switch" style="margin-top: 20px; text-align: center; font-size: 13px; color: var(--text-muted)">
+          Belum punya akun? <a href="#" id="auth-toggle-link" style="color: var(--accent); font-weight: 600; text-decoration: none;">Daftar sekarang</a>
+        </div>
+        <div class="auth-hint" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); font-size:11px; color: var(--text-faint); text-align: center;">Super admin bawaan: <b>admin</b> / <b>admin123</b></div>
+      </div>
+    </div>
+  `;
+  bindAuthEvents();
+}
+
+function bindAuthEvents() {
+  let mode = 'login'; // 'login' | 'register'
+  const form = document.getElementById('auth-form');
+  const titleEl = document.getElementById('auth-title');
+  const errorEl = document.getElementById('auth-error');
+  const submitBtn = document.getElementById('auth-submit');
+  const toggleLink = document.getElementById('auth-toggle-link');
+  const switchEl = document.querySelector('.auth-switch');
+
+  toggleLink.onclick = (e) => {
+    e.preventDefault();
+    errorEl.classList.add('hidden');
+    if (mode === 'login') {
+      mode = 'register';
+      titleEl.textContent = 'Daftar Akun Baru';
+      submitBtn.textContent = 'Daftar';
+      switchEl.innerHTML = 'Sudah punya akun? <a href="#" id="auth-toggle-link" style="color: var(--accent); font-weight: 600; text-decoration: none;">Masuk sekarang</a>';
+    } else {
+      mode = 'login';
+      titleEl.textContent = 'Masuk ke Akun';
+      submitBtn.textContent = 'Masuk';
+      switchEl.innerHTML = 'Belum punya akun? <a href="#" id="auth-toggle-link" style="color: var(--accent); font-weight: 600; text-decoration: none;">Daftar sekarang</a>';
+    }
+    bindAuthEvents(); // rebind toggle
+  };
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    errorEl.classList.add('hidden');
+    const userVal = document.getElementById('auth-user').value.trim();
+    const passVal = document.getElementById('auth-pass').value;
+
+    try {
+      if (mode === 'login') {
+        const u = await api.login(userVal, passVal);
+        state.user = u;
+        localStorage.setItem('flowboard-user', JSON.stringify(u));
+        boot();
+      } else {
+        await api.register(userVal, passVal);
+        alert('Pendaftaran sukses! Mohon hubungi super admin untuk menyetujui akun Anda.');
+        mode = 'login';
+        titleEl.textContent = 'Masuk ke Akun';
+        submitBtn.textContent = 'Masuk';
+        switchEl.innerHTML = 'Belum punya akun? <a href="#" id="auth-toggle-link" style="color: var(--accent); font-weight: 600; text-decoration: none;">Daftar sekarang</a>';
+        document.getElementById('auth-user').value = '';
+        document.getElementById('auth-pass').value = '';
+        bindAuthEvents();
+      }
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.classList.remove('hidden');
+    }
+  };
+}
+
+function renderSettings(container) {
+  const isAdmin = state.user.role === 'admin';
+  container.innerHTML = `
+    <div class="settings-container">
+      <div class="settings-card">
+        <h2>Profil Pengguna</h2>
+        <div class="profile-detail">
+          <div class="pd-row"><strong>Username:</strong> <span>${escapeHtml(state.user.username)}</span></div>
+          <div class="pd-row"><strong>Role:</strong> <span>${state.user.role === 'admin' ? 'Super Admin' : 'Anggota'}</span></div>
+        </div>
+        <button class="btn btn-ghost" id="btn-logout" style="margin-top: 16px; color: var(--danger); border-color: rgba(239, 68, 68, 0.2)">Logout</button>
+      </div>
+
+      ${isAdmin ? `
+      <div class="settings-card" style="margin-top: 24px;">
+        <h2>Manajemen Pengguna (Super Admin)</h2>
+        <div id="users-error" class="auth-error hidden" style="color: var(--danger); background: rgba(239,68,68,0.08); padding: 10px 12px; border-radius: var(--r-md); font-size:12.5px; font-weight:600; margin-bottom: 16px; border: 1px solid rgba(239,68,68,0.18)"></div>
+        
+        <form id="admin-create-user-form" style="display:flex; gap: 8px; margin-bottom: 20px; align-items: flex-end;">
+          <div class="field" style="margin-bottom:0; flex:1;">
+            <label style="font-size:11px; margin-bottom:4px; display:block; color:var(--text-muted)">Username</label>
+            <input id="ac-username" type="text" placeholder="Username baru" required style="width:100%; padding: 8px 12px; font-size:13px; background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-md); color:var(--text); outline:none;" />
+          </div>
+          <div class="field" style="margin-bottom:0; flex:1;">
+            <label style="font-size:11px; margin-bottom:4px; display:block; color:var(--text-muted)">Password</label>
+            <input id="ac-password" type="password" placeholder="Password" required style="width:100%; padding: 8px 12px; font-size:13px; background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-md); color:var(--text); outline:none;" />
+          </div>
+          <div class="field" style="margin-bottom:0; width: 110px;">
+            <label style="font-size:11px; margin-bottom:4px; display:block; color:var(--text-muted)">Role</label>
+            <select id="ac-role" style="padding: 8px 12px; font-size:13px; background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-md); color:var(--text); width:100%; outline:none;">
+              <option value="user">Anggota</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary" style="padding: 0 16px; font-size:13px; height: 36px; display:flex; align-items:center; justify-content:center;">+ Buat</button>
+        </form>
+
+        <div class="users-table-wrapper" style="overflow-x:auto;">
+          <table class="users-table" style="width:100%; border-collapse:collapse; text-align:left; font-size:13.5px;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border-strong); color:var(--text-muted); font-weight:700;">
+                <th style="padding: 10px 12px;">Username</th>
+                <th style="padding: 10px 12px;">Role</th>
+                <th style="padding: 10px 12px;">Status</th>
+                <th style="padding: 10px 12px; text-align:right;">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${state.usersList.map(u => {
+                const isSelf = u.username === state.user.username;
+                const statusText = u.approved ? '<span style="color:var(--success);font-weight:600;">Aktif</span>' : '<span style="color:var(--warning);font-weight:600;">Pending</span>';
+                const actionButton = isSelf ? '' : (
+                  u.approved 
+                    ? `<button class="btn btn-ghost" style="padding: 4px 8px; font-size: 11px; border-color: rgba(245,158,11,0.2); color:var(--warning);" data-toggle-approve="${u.id}" data-approved="false">Suspen</button>`
+                    : `<button class="btn btn-ghost" style="padding: 4px 8px; font-size: 11px; border-color: rgba(16,185,129,0.2); color:var(--success);" data-toggle-approve="${u.id}" data-approved="true">Setujui</button>`
+                );
+                const deleteButton = isSelf ? '' : `<button class="btn btn-ghost" style="padding: 4px 8px; font-size: 11px; border-color: rgba(239,68,68,0.2); color:var(--danger); margin-left: 4px;" data-delete-user="${u.id}">Hapus</button>`;
+                
+                return `
+                  <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding: 10px 12px;"><strong>${escapeHtml(u.username)}</strong> ${isSelf ? '<small style="color:var(--text-faint)">(Anda)</small>' : ''}</td>
+                    <td style="padding: 10px 12px;">${u.role === 'admin' ? 'Admin' : 'Anggota'}</td>
+                    <td style="padding: 10px 12px;">${statusText}</td>
+                    <td style="padding: 10px 12px; text-align:right;">
+                      ${actionButton}
+                      ${deleteButton}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      ` : ''}
+    </div>
+  `;
+
+  // Bind settings page buttons
+  container.querySelector('#btn-logout').onclick = () => {
+    localStorage.removeItem('flowboard-user');
+    state.user = null;
+    boot();
+  };
+
+  if (isAdmin) {
+    const errorEl = container.querySelector('#users-error');
+    
+    // Create user
+    container.querySelector('#admin-create-user-form').onsubmit = async (e) => {
+      e.preventDefault();
+      errorEl.classList.add('hidden');
+      const uEl = container.querySelector('#ac-username');
+      const pEl = container.querySelector('#ac-password');
+      const rEl = container.querySelector('#ac-role');
+      try {
+        await api.createUser(uEl.value.trim(), pEl.value, rEl.value);
+        uEl.value = '';
+        pEl.value = '';
+        state.usersList = await api.getUsers();
+        renderContent();
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove('hidden');
+      }
+    };
+
+    // Toggle approval
+    container.querySelectorAll('[data-toggle-approve]').forEach(btn => {
+      btn.onclick = async () => {
+        const id = Number(btn.dataset.toggleApprove);
+        const approved = btn.dataset.approved === 'true';
+        try {
+          await api.approveUser(id, approved);
+          state.usersList = await api.getUsers();
+          renderContent();
+        } catch (err) {
+          alert('Gagal mengubah status: ' + err.message);
+        }
+      };
+    });
+
+    // Delete user
+    container.querySelectorAll('[data-delete-user]').forEach(btn => {
+      btn.onclick = async () => {
+        const id = Number(btn.dataset.deleteUser);
+        if (confirm('Hapus pengguna ini secara permanen?')) {
+          try {
+            await api.deleteUser(id);
+            state.usersList = await api.getUsers();
+            renderContent();
+          } catch (err) {
+            alert('Gagal menghapus pengguna: ' + err.message);
+          }
+        }
+      };
+    });
+  }
 }
 
 boot();

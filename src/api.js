@@ -29,7 +29,15 @@ function createHttpApi() {
     moveCard: (cardId, toListId, orderedIds) => call('cards:move', { cardId, toListId, orderedIds }),
     getUpcoming: () => call('cards:upcoming'),
     notify: async () => true,
-    dbStatus: () => call('db:status')
+    dbStatus: () => call('db:status'),
+
+    // Auth & Users
+    login: (username, password) => call('auth:login', { username, password }),
+    register: (username, password) => call('auth:register', { username, password }),
+    getUsers: () => call('users:list'),
+    approveUser: (id, approved) => call('users:approve', { id, approved }),
+    createUser: (username, password, role) => call('users:create', { username, password, role }),
+    deleteUser: (id) => call('users:delete', { id })
   };
 }
 

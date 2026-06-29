@@ -31,5 +31,13 @@ contextBridge.exposeInMainWorld('api', {
   notify: (title, body) => ipcRenderer.invoke('notify', { title, body }),
 
   // DB status
-  dbStatus: () => ipcRenderer.invoke('db:status')
+  dbStatus: () => ipcRenderer.invoke('db:status'),
+
+  // Auth & Users
+  login: (username, password) => ipcRenderer.invoke('auth:login', { username, password }),
+  register: (username, password) => ipcRenderer.invoke('auth:register', { username, password }),
+  getUsers: () => ipcRenderer.invoke('users:list'),
+  approveUser: (id, approved) => ipcRenderer.invoke('users:approve', { id, approved }),
+  createUser: (username, password, role) => ipcRenderer.invoke('users:create', { username, password, role }),
+  deleteUser: (id) => ipcRenderer.invoke('users:delete', { id })
 });

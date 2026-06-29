@@ -1,8 +1,6 @@
-// FlowBoard data layer.
-// Uses Neon Postgres when NEON_DATABASE_URL is set; otherwise falls back to a
-// local JSON file so the app runs immediately without a database.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 require('dotenv').config();
 
 let mode = 'local'; // 'neon' | 'local'
@@ -10,11 +8,15 @@ let sql = null;     // neon tagged-template client
 let localPath = null;
 let local = null;   // in-memory mirror of local JSON
 
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
+
 // ---------- Local JSON store ----------
 function defaultData() {
   const now = new Date().toISOString();
   return {
-    seq: 7,
+    seq: 8,
     boards: [{ id: 1, title: 'Jadwal Saya', position: 0, created_at: now }],
     lists: [
       { id: 2, board_id: 1, title: 'To Do', position: 0, created_at: now },
@@ -24,6 +26,9 @@ function defaultData() {
     cards: [
       { id: 5, list_id: 2, title: 'Selamat datang di FlowBoard 👋', description: 'Klik kartu untuk mengedit. Seret kartu antar kolom.', parent_id: null, priority: 'biasa', start_at: null, due_at: null, color: '#6366f1', completed: false, position: 0, created_at: now },
       { id: 6, list_id: 2, title: 'Coba atur tenggat waktu', description: 'Buka kartu, set due date & lihat di Kalender.', parent_id: null, priority: 'biasa', start_at: null, due_at: null, color: '#ec4899', completed: false, position: 1, created_at: now }
+    ],
+    users: [
+      { id: 7, username: 'admin', password_hash: hashPassword('admin123'), role: 'admin', approved: true, created_at: now }
     ]
   };
 }
@@ -32,6 +37,12 @@ function loadLocal() {
   try {
     if (fs.existsSync(localPath)) {
       local = JSON.parse(fs.readFileSync(localPath, 'utf-8'));
+      if (!local.users) {
+        local.users = [
+          { id: nextId(), username: 'admin', password_hash: hashPassword('admin123'), role: 'admin', approved: true, created_at: new Date().toISOString() }
+        ];
+        saveLocal();
+      }
     } else {
       local = defaultData();
       saveLocal();
@@ -99,6 +110,11 @@ async function seedIfEmpty() {
       await sql('INSERT INTO lists (board_id, title, position) VALUES ($1, $2, $3)', [boardId, titles[i], i]);
     }
   }
+  const uRows = await sql('SELECT COUNT(*)::int AS c FROM users');
+  if (uRows[0].c === 0) {
+    const adminHash = hashPassword('admin123');
+    await sql('INSERT INTO users (username, password_hash, role, approved) VALUES ($1, $2, $3, $4)', ['admin', adminHash, 'admin', true]);
+  }
 }
 
 function status() {
@@ -108,6 +124,7 @@ function status() {
 module.exports = {
   init,
   status,
+  hashPassword,
   get mode() { return mode; },
   get sql() { return sql; },
   get local() { return local; },

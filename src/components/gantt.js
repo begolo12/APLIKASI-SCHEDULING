@@ -126,12 +126,21 @@ export function renderGantt(container, cards, onEventClick, onUpdateCard) {
     roots.push(card);
   });
 
+  const dateSorter = (a, b) => {
+    const aTime = a.start_at ? new Date(a.start_at).getTime() : 0;
+    const bTime = b.start_at ? new Date(b.start_at).getTime() : 0;
+    if (aTime !== bTime) return aTime - bTime;
+    return a.position - b.position;
+  };
+
+  roots.sort(dateSorter);
+
   const orderedCards = [];
   roots.forEach((root, rootIndex) => {
     const rootNo = `${rootIndex + 1}`;
     orderedCards.push({ card: root, isSub: false, no: rootNo });
     const children = childrenMap[String(root.id)] || [];
-    children.sort((a, b) => a.position - b.position);
+    children.sort(dateSorter);
     children.forEach((child, childIndex) => {
       orderedCards.push({ card: child, isSub: true, no: `${rootNo}.${childIndex + 1}` });
     });
@@ -169,6 +178,22 @@ export function renderGantt(container, cards, onEventClick, onUpdateCard) {
     if (colStart > colCount) colStart = colCount;
     if (colEnd <= colStart) colEnd = colStart + 1;
 
+    let marginLeft = '0%';
+    let marginRight = '0%';
+
+    if (zoomMode === 'month' && hasDates) {
+      const getDaysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+      const daysInStartMonth = getDaysInMonth(startVal.getFullYear(), startVal.getMonth());
+      const daysInDueMonth = getDaysInMonth(dueVal.getFullYear(), dueVal.getMonth());
+
+      const f1 = (startVal.getDate() - 1) / daysInStartMonth;
+      const f2 = dueVal.getDate() / daysInDueMonth;
+      const N = colEnd - colStart;
+
+      marginLeft = `${((f1 / N) * 100).toFixed(2)}%`;
+      marginRight = `${(((1 - f2) / N) * 100).toFixed(2)}%`;
+    }
+
     const rowEl = document.createElement('div');
     rowEl.className = 'gantt-row';
     rowEl.innerHTML = `
@@ -180,7 +205,7 @@ export function renderGantt(container, cards, onEventClick, onUpdateCard) {
       <div class="gantt-row-track" style="grid-template-columns: repeat(${colCount}, 1fr)">
         <div class="gantt-bar ${card.completed ? 'completed' : ''} ${!hasDates ? 'unscheduled' : ''}" 
              data-id="${card.id}" 
-             style="grid-column: ${colStart} / ${colEnd}; background: ${card.color || 'var(--accent)'}; opacity: ${!hasDates ? '0.75' : '1'}; border: ${!hasDates ? '2px dashed rgba(255,255,255,0.6)' : 'none'}; cursor: ${zoomMode === 'day' ? 'grab' : 'pointer'}">
+             style="grid-column: ${colStart} / ${colEnd}; margin-left: ${marginLeft}; margin-right: ${marginRight}; background: ${card.color || 'var(--accent)'}; opacity: ${!hasDates ? '0.75' : '1'}; border: ${!hasDates ? '2px dashed rgba(255,255,255,0.6)' : 'none'}; cursor: ${zoomMode === 'day' ? 'grab' : 'pointer'}">
           ${zoomMode === 'day' ? '<div class="gantt-bar-handle gantt-bar-handle-left"></div>' : ''}
           <span class="gantt-bar-title">${no}. ${escapeHtml(card.title)}</span>
           ${zoomMode === 'day' ? '<div class="gantt-bar-handle gantt-bar-handle-right"></div>' : ''}
@@ -189,9 +214,14 @@ export function renderGantt(container, cards, onEventClick, onUpdateCard) {
     `;
 
     // Click to open card details modal
+    let hasDragged = false;
     const barEl = rowEl.querySelector('.gantt-bar');
     barEl.addEventListener('click', (e) => {
       if (e.target.classList.contains('gantt-bar-handle')) return; // ignore handle clicks
+      if (hasDragged) {
+        hasDragged = false;
+        return;
+      }
       onEventClick(card.id);
     });
 
@@ -215,6 +245,7 @@ export function renderGantt(container, cards, onEventClick, onUpdateCard) {
         initialX = e.clientX;
         initialColStart = colStart;
         initialColEnd = colEnd;
+        hasDragged = false;
 
         if (e.target.classList.contains('gantt-bar-handle-left')) {
           dragType = 'left';
@@ -232,6 +263,9 @@ export function renderGantt(container, cards, onEventClick, onUpdateCard) {
         if (!isDragging) return;
 
         const deltaX = e.clientX - initialX;
+        if (Math.abs(deltaX) > 2) {
+          hasDragged = true;
+        }
         const deltaDays = Math.round(deltaX / dayWidth);
 
         let newStart = colStart;
