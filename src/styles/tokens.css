@@ -1,0 +1,62 @@
+/* FlowBoard Design Tokens — premium minimalist dark theme */
+:root {
+  /* Surfaces */
+  --bg-app: #09090b;
+  --bg-deep: #09090b;
+  --bg-surface: #18181b;
+  --bg-surface-2: #27272a;
+  --bg-elevated: #3f3f46;
+  --bg-glass: rgba(24, 24, 27, 0.85);
+
+  /* Brand / accent */
+  --accent: #6366f1;
+  --accent-2: #8b5cf6;
+  --accent-3: #a78bfa;
+  --accent-grad: #6366f1;
+  --accent-soft: rgba(99, 102, 241, 0.08);
+
+  /* Text */
+  --text-strong: #fafafa;
+  --text: #e4e4e7;
+  --text-muted: #a1a1aa;
+  --text-faint: #52525b;
+
+  /* Borders & lines */
+  --border: #27272a;
+  --border-strong: #3f3f46;
+
+  /* Status */
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --success: #10b981;
+  --info: #06b6d4;
+
+  /* Radii (Clean, smaller radius for minimalist look) */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-xl: 12px;
+
+  /* Shadows (Flat, clean shadows) */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 0 1px #3f3f46;
+
+  /* Typography */
+  --font-display: 'Inter', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+
+  /* Motion */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Label color swatches */
+.swatch-indigo { background: #6366f1; }
+.swatch-violet { background: #8b5cf6; }
+.swatch-pink { background: #ec4899; }
+.swatch-emerald { background: #10b981; }
+.swatch-amber { background: #f59e0b; }
+.swatch-sky { background: #38bdf8; }
+.swatch-rose { background: #f43f5e; }

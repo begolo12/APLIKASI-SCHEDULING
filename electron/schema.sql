@@ -1,0 +1,39 @@
+-- FlowBoard schema (Neon Postgres)
+CREATE TABLE IF NOT EXISTS boards (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS lists (
+  id BIGSERIAL PRIMARY KEY,
+  board_id BIGINT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS cards (
+  id BIGSERIAL PRIMARY KEY,
+  list_id BIGINT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+  parent_id BIGINT REFERENCES cards(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  priority TEXT DEFAULT 'biasa',
+  start_at TIMESTAMPTZ,
+  due_at TIMESTAMPTZ,
+  color TEXT,
+  completed BOOLEAN NOT NULL DEFAULT false,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS start_at TIMESTAMPTZ;
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS parent_id BIGINT REFERENCES cards(id) ON DELETE SET NULL;
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'biasa';
+
+CREATE INDEX IF NOT EXISTS idx_lists_board ON lists(board_id);
+CREATE INDEX IF NOT EXISTS idx_cards_list ON cards(list_id);
+CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due_at);
+CREATE INDEX IF NOT EXISTS idx_cards_parent ON cards(parent_id);
