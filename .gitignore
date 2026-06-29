@@ -4,3 +4,5 @@ release/
 .env
 flowboard-data.json
 *.log
+
+.vercel
