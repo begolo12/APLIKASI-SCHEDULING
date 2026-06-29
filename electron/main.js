@@ -27,6 +27,10 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[Renderer] ${message} (at ${path.basename(sourceId)}:${line})`);
+  });
+
   mainWindow.on('close', (e) => {
     // Minimize to tray instead of quitting (keeps reminders alive)
     if (!app.isQuitting) {

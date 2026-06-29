@@ -1,94 +1,33 @@
+// FlowBoard DB layer — Neon Postgres only (single source of truth for Electron).
+// Vercel / browser preview path uses vite-neon-api.js with the same SQL.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 require('dotenv').config();
 
-let mode = 'local'; // 'neon' | 'local'
-let sql = null;     // neon tagged-template client
-let localPath = null;
-let local = null;   // in-memory mirror of local JSON
+let sql = null;       // neon tagged-template client
+let mode = 'neon';
 
 function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-// ---------- Local JSON store ----------
-function defaultData() {
-  const now = new Date().toISOString();
-  return {
-    seq: 8,
-    boards: [{ id: 1, title: 'Jadwal Saya', position: 0, created_at: now }],
-    lists: [
-      { id: 2, board_id: 1, title: 'To Do', position: 0, created_at: now },
-      { id: 3, board_id: 1, title: 'In Progress', position: 1, created_at: now },
-      { id: 4, board_id: 1, title: 'Done', position: 2, created_at: now }
-    ],
-    cards: [
-      { id: 5, list_id: 2, title: 'Selamat datang di FlowBoard 👋', description: 'Klik kartu untuk mengedit. Seret kartu antar kolom.', parent_id: null, priority: 'biasa', start_at: null, due_at: null, color: '#6366f1', completed: false, position: 0, created_at: now },
-      { id: 6, list_id: 2, title: 'Coba atur tenggat waktu', description: 'Buka kartu, set due date & lihat di Kalender.', parent_id: null, priority: 'biasa', start_at: null, due_at: null, color: '#ec4899', completed: false, position: 1, created_at: now }
-    ],
-    users: [
-      { id: 7, username: 'admin', password_hash: hashPassword('admin123'), role: 'admin', approved: true, created_at: now }
-    ]
-  };
-}
-
-function loadLocal() {
-  try {
-    if (fs.existsSync(localPath)) {
-      local = JSON.parse(fs.readFileSync(localPath, 'utf-8'));
-      if (!local.users) {
-        local.users = [
-          { id: nextId(), username: 'admin', password_hash: hashPassword('admin123'), role: 'admin', approved: true, created_at: new Date().toISOString() }
-        ];
-        saveLocal();
-      }
-    } else {
-      local = defaultData();
-      saveLocal();
-    }
-  } catch (e) {
-    console.warn('Local store load failed, recreating:', e.message);
-    local = defaultData();
-    saveLocal();
-  }
-}
-
-function saveLocal() {
-  try {
-    fs.mkdirSync(path.dirname(localPath), { recursive: true });
-    fs.writeFileSync(localPath, JSON.stringify(local, null, 2));
-  } catch (e) {
-    console.error('Local store save failed:', e.message);
-  }
-}
-
-function nextId() {
-  local.seq += 1;
-  return local.seq;
-}
-
-// ---------- Init ----------
 async function init(userDataDir) {
-  localPath = path.join(userDataDir, 'flowboard-data.json');
   const url = process.env.NEON_DATABASE_URL;
-
-  if (url && url.startsWith('postgres')) {
-    try {
-      const { neon } = require('@neondatabase/serverless');
-      sql = neon(url);
-      await migrate();
-      await seedIfEmpty();
-      mode = 'neon';
-      console.log('[db] Connected to Neon Postgres');
-      return;
-    } catch (e) {
-      console.error('[db] Neon connection failed, using local store:', e.message);
-    }
+  if (!url || !url.startsWith('postgres')) {
+    throw new Error(
+      'NEON_DATABASE_URL belum diset. Tambahkan credential Neon di .env (lihat .env.example). ' +
+      'FlowBoard butuh koneksi Neon untuk jalan.'
+    );
   }
-  mode = 'local';
-  loadLocal();
-  console.log('[db] Using local JSON store at', localPath);
+  const { neon } = require('@neondatabase/serverless');
+  sql = neon(url);
+  await migrate();
+  await seedIfEmpty();
+  mode = 'neon';
+  console.log('[db] Connected to Neon Postgres');
+  // userDataDir unused but kept for future local cache
+  void userDataDir;
 }
 
 async function migrate() {
@@ -118,7 +57,7 @@ async function seedIfEmpty() {
 }
 
 function status() {
-  return { mode };
+  return { mode, sqlReady: !!sql };
 }
 
 module.exports = {
@@ -126,8 +65,5 @@ module.exports = {
   status,
   hashPassword,
   get mode() { return mode; },
-  get sql() { return sql; },
-  get local() { return local; },
-  saveLocal,
-  nextId
+  get sql() { return sql; }
 };

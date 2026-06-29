@@ -1,7 +1,7 @@
 import './styles/app.css';
 import Sortable from 'sortablejs';
 import api from './api.js';
-import { dueInfo, escapeHtml } from './utils.js';
+import { dueInfo, escapeHtml, describeRule } from './utils.js';
 import { openCardModal } from './components/cardModal.js';
 import { renderCalendar } from './components/calendar.js';
 import { renderGantt } from './components/gantt.js';
@@ -13,13 +13,20 @@ const state = {
   activeBoardId: null,
   lists: [],
   cards: [],
-  view: 'board', // 'board' | 'calendar' | 'gantt' | 'settings'
+  labels: [],          // labels for active board
+  cardLabelsMap: {},   // cardId -> [{id, name, color}]
+  view: 'board',       // 'board' | 'calendar' | 'gantt' | 'settings'
   search: '',
-  dbMode: 'local',
+  filterLabelId: null, // null = all
+  filterPriority: '',  // '' = all
+  filterDue: '',       // '' = all, 'overdue', 'today', 'week', 'open'
+  dbMode: 'neon',
   saveStatus: 'saved',
   saveError: '',
   user: savedUser ? JSON.parse(savedUser) : null,
-  usersList: []
+  usersList: [],
+  usersListLoaded: false,
+  sidebarCollapsed: typeof localStorage !== 'undefined' ? localStorage.getItem('flowboard-sidebar-collapsed') === 'true' : false
 };
 
 const app = document.getElementById('app');
@@ -32,13 +39,29 @@ async function loadBoards() {
 }
 
 async function loadActiveBoard() {
-  if (!state.activeBoardId) { state.lists = []; state.cards = []; return; }
-  const [lists, cards] = await Promise.all([
+  if (!state.activeBoardId) { state.lists = []; state.cards = []; state.labels = []; state.cardLabelsMap = {}; return; }
+  const [lists, cards, labels] = await Promise.all([
     api.getLists(state.activeBoardId),
-    api.getCards(state.activeBoardId)
+    api.getCards(state.activeBoardId),
+    api.getLabels(state.activeBoardId)
   ]);
   state.lists = lists;
   state.cards = cards;
+  state.labels = labels || [];
+
+  // Load card-label associations in parallel
+  const labelMap = {};
+  await Promise.all(state.cards.map(async c => {
+    try {
+      const cls = await api.getCardLabels(c.id);
+      labelMap[String(c.id)] = cls || [];
+    } catch { labelMap[String(c.id)] = []; }
+  }));
+  state.cardLabelsMap = labelMap;
+}
+
+function getCardLabels(cardId) {
+  return state.cardLabelsMap[String(cardId)] || [];
 }
 
 // ---------------- Render ----------------
@@ -60,7 +83,7 @@ function render() {
 
 function renderSidebar() {
   return `
-    <aside class="sidebar">
+    <aside class="sidebar ${state.sidebarCollapsed ? 'collapsed' : ''}" id="sidebar">
       <div class="brand">
         <div class="brand-logo">🗂️</div>
         <div class="brand-name">Flow<span>Board</span></div>
@@ -95,7 +118,7 @@ function renderSidebar() {
         ` : ''}
         <div class="db-badge">
           <span class="led ${state.dbMode === 'neon' ? 'neon' : 'local'}"></span>
-          ${state.dbMode === 'neon' ? 'Neon Postgres' : (state.dbMode === 'mock' ? 'Preview (browser)' : 'Penyimpanan lokal')}
+          ${state.dbMode === 'neon' ? 'Neon Postgres' : (state.dbMode === 'mock' ? 'Preview (browser)' : 'Mode lokal')}
         </div>
       </div>
     </aside>
@@ -103,17 +126,20 @@ function renderSidebar() {
 }
 
 function renderTopbar() {
+  const toggleBtnHtml = `<button class="sidebar-toggle-btn" id="toggle-sidebar" title="Tampilkan/Sembunyikan Sidebar">📂</button>`;
   if (state.view === 'settings') {
     return `
       <header class="topbar">
-        <h1>Pengaturan Aplikasi</h1>
+        ${toggleBtnHtml}
+        <h1 style="margin-left: 10px;">Pengaturan Aplikasi</h1>
       </header>
     `;
   }
   const board = state.boards.find(b => b.id === state.activeBoardId);
   return `
     <header class="topbar">
-      <h1>${board ? escapeHtml(board.title) : 'FlowBoard'}</h1>
+      ${toggleBtnHtml}
+      <h1 style="margin-left: 10px;">${board ? escapeHtml(board.title) : 'FlowBoard'}</h1>
       <div class="view-toggle">
         <button data-view="board" class="${state.view === 'board' ? 'active' : ''}">Papan</button>
         <button data-view="calendar" class="${state.view === 'calendar' ? 'active' : ''}">Kalender</button>
@@ -134,6 +160,41 @@ function renderSaveBanner() {
   return `<div class="save-banner ${cls}">${text}</div>`;
 }
 
+function renderFilterBar() {
+  if (state.view !== 'board' && state.view !== 'calendar' && state.view !== 'gantt') return '';
+  return `
+    <div class="filter-bar">
+      <div class="filter-group">
+        <label>Label:</label>
+        <select id="filter-label" style="background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-sm); padding:4px 8px; color:var(--text); font-size:12px; outline:none;">
+          <option value="">Semua</option>
+          ${state.labels.map(l => `<option value="${l.id}" ${state.filterLabelId == l.id ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Prioritas:</label>
+        <select id="filter-priority" style="background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-sm); padding:4px 8px; color:var(--text); font-size:12px; outline:none;">
+          <option value="">Semua</option>
+          <option value="tinggi" ${state.filterPriority === 'tinggi' ? 'selected' : ''}>🔴 Tinggi</option>
+          <option value="biasa" ${state.filterPriority === 'biasa' ? 'selected' : ''}>🟡 Biasa</option>
+          <option value="rendah" ${state.filterPriority === 'rendah' ? 'selected' : ''}>🟢 Rendah</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Tenggat:</label>
+        <select id="filter-due" style="background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-sm); padding:4px 8px; color:var(--text); font-size:12px; outline:none;">
+          <option value="">Semua</option>
+          <option value="open" ${state.filterDue === 'open' ? 'selected' : ''}>Belum selesai</option>
+          <option value="overdue" ${state.filterDue === 'overdue' ? 'selected' : ''}>Terlambat</option>
+          <option value="today" ${state.filterDue === 'today' ? 'selected' : ''}>Hari ini</option>
+          <option value="week" ${state.filterDue === 'week' ? 'selected' : ''}>7 hari ke depan</option>
+        </select>
+      </div>
+      <button id="filter-clear" class="btn btn-ghost" style="padding:4px 10px; font-size:11px; height:26px; display:${(state.filterLabelId || state.filterPriority || state.filterDue) ? 'inline-flex' : 'none'}; align-items:center;">Reset</button>
+    </div>
+  `;
+}
+
 async function persist(action) {
   state.saveStatus = 'saving';
   state.saveError = '';
@@ -152,33 +213,101 @@ async function persist(action) {
   }
 }
 
+function applyFilters(cards) {
+  let out = cards;
+  if (state.search) {
+    const s = state.search.toLowerCase();
+    out = out.filter(c => c.title.toLowerCase().includes(s));
+  }
+  if (state.filterLabelId) {
+    const lid = Number(state.filterLabelId);
+    out = out.filter(c => getCardLabels(c.id).some(l => Number(l.id) === lid));
+  }
+  if (state.filterPriority) {
+    out = out.filter(c => c.priority === state.filterPriority);
+  }
+  if (state.filterDue) {
+    const now = new Date();
+    const oneDay = 86400000;
+    out = out.filter(c => {
+      if (state.filterDue === 'open') return !c.completed;
+      if (state.filterDue === 'overdue') return c.due_at && !c.completed && new Date(c.due_at) < now;
+      if (state.filterDue === 'today') {
+        if (!c.due_at) return false;
+        const d = new Date(c.due_at);
+        return d.toDateString() === now.toDateString();
+      }
+      if (state.filterDue === 'week') {
+        if (!c.due_at) return false;
+        const d = new Date(c.due_at);
+        return d >= now && (d - now) < 7 * oneDay;
+      }
+      return true;
+    });
+  }
+  return out;
+}
+
 function renderContent() {
   const content = document.getElementById('content');
   if (state.view === 'settings') {
     content.className = 'settings-wrap';
-    renderSettings(content);
+    if (state.user.role === 'admin' && !state.usersListLoaded) {
+      content.innerHTML = '<div style="padding: 24px; text-align: center; color: var(--text-muted);">Memuat data pengguna...</div>';
+      api.getUsers().then(list => {
+        state.usersList = list;
+        state.usersListLoaded = true;
+        renderSettings(content);
+      }).catch(err => {
+        console.error(err);
+        state.usersListLoaded = true;
+        renderSettings(content);
+      });
+    } else {
+      renderSettings(content);
+    }
     return;
   }
+
+  // Insert filter bar before content
+  const existingFilter = document.querySelector('.filter-bar');
+  if (existingFilter) existingFilter.remove();
+  const filterHtml = renderFilterBar();
+  if (filterHtml) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = filterHtml;
+    content.parentNode.insertBefore(tmp.firstElementChild, content);
+  }
+  bindFilterBar();
+
   if (state.view === 'calendar') {
     content.className = 'calendar-wrap';
-    renderCalendar(content, state.cards, openCardById);
+    renderCalendar(content, applyFilters(state.cards), openCardById, async (cardId, isoDate) => {
+      const card = state.cards.find(c => Number(c.id) === Number(cardId));
+      if (!card) return;
+      const prev = card.due_at ? new Date(card.due_at) : new Date();
+      const [y, m, d] = isoDate.split('-').map(Number);
+      const next = new Date(y, m - 1, d, prev.getHours(), prev.getMinutes());
+      card.due_at = next.toISOString();
+      await api.updateCard(card);
+      renderContent();
+    });
     return;
   }
   if (state.view === 'gantt') {
     content.className = 'gantt-wrap';
-    // Filter cards to current search query if present
-    const filteredCards = state.cards.filter(c => !state.search || c.title.toLowerCase().includes(state.search.toLowerCase()));
+    const filteredCards = applyFilters(state.cards);
     renderGantt(content, filteredCards, openCardById, async (cardId, startAt, dueAt) => {
       const card = state.cards.find(c => c.id === cardId);
       if (card) {
         card.start_at = startAt;
         card.due_at = dueAt;
         await api.updateCard(card);
-        // Do not full render(), just refresh Gantt content to keep navigation state smooth
         const contentWrap = document.getElementById('content');
         const searchVal = document.getElementById('search') ? document.getElementById('search').value : '';
-        const searchFiltered = state.cards.filter(c => !searchVal || c.title.toLowerCase().includes(searchVal.toLowerCase()));
-        renderGantt(contentWrap, searchFiltered, openCardById, async (cid, sAt, dAt) => {
+        const localState = { ...state, search: searchVal };
+        const refreshed = applyFilters(state.cards);
+        renderGantt(contentWrap, refreshed, openCardById, async (cid, sAt, dAt) => {
           const cd = state.cards.find(x => x.id === cid);
           if (cd) {
             cd.start_at = sAt;
@@ -214,15 +343,62 @@ function renderList(list) {
   el.className = 'list';
   el.dataset.listId = list.id;
 
-  const cards = state.cards
+  const listCards = applyFilters(state.cards)
     .filter(c => c.list_id === list.id)
-    .filter(c => !state.search || c.title.toLowerCase().includes(state.search.toLowerCase()))
     .sort((a, b) => a.position - b.position);
+
+  // Group subtasks under parents
+  const rootsInList = [];
+  const subtasksInList = [];
+
+  listCards.forEach(c => {
+    if (c.parent_id) {
+      const parentExists = state.cards.some(p => String(p.id) === String(c.parent_id));
+      if (parentExists) {
+        subtasksInList.push(c);
+      } else {
+        rootsInList.push(c);
+      }
+    } else {
+      rootsInList.push(c);
+    }
+  });
+
+  const renderedParentIds = new Set();
+  const itemsToRender = [];
+
+  rootsInList.forEach(parent => {
+    itemsToRender.push({ type: 'real', card: parent, isSub: false });
+    renderedParentIds.add(String(parent.id));
+
+    const subs = subtasksInList.filter(s => String(s.parent_id) === String(parent.id));
+    subs.forEach(sub => {
+      itemsToRender.push({ type: 'real', card: sub, isSub: true });
+    });
+  });
+
+  subtasksInList.forEach(sub => {
+    const parentIdStr = String(sub.parent_id);
+    if (!renderedParentIds.has(parentIdStr)) {
+      const parentCard = state.cards.find(p => String(p.id) === parentIdStr);
+      if (parentCard) {
+        itemsToRender.push({ type: 'virtual', card: parentCard, isSub: false });
+        renderedParentIds.add(parentIdStr);
+
+        const sisterSubs = subtasksInList.filter(s => String(s.parent_id) === parentIdStr);
+        sisterSubs.forEach(s => {
+          itemsToRender.push({ type: 'real', card: s, isSub: true });
+        });
+      } else {
+        itemsToRender.push({ type: 'real', card: sub, isSub: false });
+      }
+    }
+  });
 
   el.innerHTML = `
     <div class="list-head">
       <div class="title" contenteditable="true" spellcheck="false">${escapeHtml(list.title)}</div>
-      <span class="count">${cards.length}</span>
+      <span class="count">${listCards.length}</span>
       <span class="del" title="Hapus kolom">🗑</span>
     </div>
     <div class="cards" data-list-id="${list.id}"></div>
@@ -231,9 +407,10 @@ function renderList(list) {
   `;
 
   const cardsEl = el.querySelector('.cards');
-  for (const card of cards) cardsEl.appendChild(renderCard(card));
+  for (const item of itemsToRender) {
+    cardsEl.appendChild(renderCard(item.card, item.type === 'virtual', item.isSub));
+  }
 
-  // Rename list
   const titleEl = el.querySelector('.title');
   titleEl.addEventListener('blur', () => {
     const t = titleEl.textContent.trim() || 'Tanpa nama';
@@ -266,13 +443,17 @@ function renderList(list) {
   return el;
 }
 
-function renderCard(card) {
+function renderCard(card, isVirtual = false, isSubtask = false) {
   const el = document.createElement('div');
-  const isSubtask = !!card.parent_id;
-  el.className = `card ${card.completed ? 'completed' : ''}`;
+  const isParentCard = !isSubtask && state.cards.some(c => String(c.parent_id) === String(card.id));
+  el.className = `card ${card.completed ? 'completed' : ''} ${isVirtual ? 'virtual-parent' : ''} ${isParentCard ? 'parent-card' : ''}`;
   if (isSubtask) {
     el.style.marginLeft = '14px';
     el.style.borderLeft = '3px solid var(--accent)';
+  }
+  if (isVirtual) {
+    el.style.opacity = '0.65';
+    el.style.border = '1px dashed var(--border-strong)';
   }
   el.dataset.cardId = card.id;
 
@@ -280,7 +461,7 @@ function renderCard(card) {
   const children = state.cards.filter(c => String(c.parent_id) === String(card.id));
   const done = children.filter(c => c.completed).length;
   const progress = !isSubtask && children.length ? `<div class="card-progress">Subtask: ${done}/${children.length} selesai</div>` : '';
-  
+
   const priorityLabels = {
     'tinggi': '<span class="due-pill soon">🔴 Tinggi</span>',
     'rendah': '<span class="due-pill done">🟢 Rendah</span>',
@@ -288,12 +469,22 @@ function renderCard(card) {
   };
   const priorityBadge = priorityLabels[card.priority] || '';
 
+  const cardLabels = getCardLabels(card.id);
+  const labelChips = cardLabels.length
+    ? `<div class="card-labels">${cardLabels.map(l => `<span class="card-label" style="--lc:${l.color}">${escapeHtml(l.name)}</span>`).join('')}</div>`
+    : '';
+
+  const rule = describeRule(card);
+  const recurringBadge = rule ? `<span class="due-pill normal" title="${escapeHtml(rule)}">🔁 Berulang</span>` : '';
+
   el.innerHTML = `
     ${card.color ? `<div class="card-color-bar" style="background:${card.color}"></div>` : ''}
     <div class="card-title">${isSubtask ? '<span style="color:var(--text-faint);margin-right:6px;">↳</span>' : ''}${escapeHtml(card.title)}</div>
+    ${labelChips}
     ${progress}
-    ${di || priorityBadge ? `<div class="card-meta">
+    ${(di || priorityBadge || recurringBadge) ? `<div class="card-meta">
       ${priorityBadge}
+      ${recurringBadge}
       ${di ? `<span class="due-pill ${di.state}">🕘 ${di.label}</span>` : ''}
     </div>` : ''}
   `;
@@ -303,7 +494,6 @@ function renderCard(card) {
 
 // ---------------- Drag and drop ----------------
 function setupDragAndDrop(boardEl) {
-  // Lists are reorderable
   Sortable.create(boardEl, {
     animation: 180,
     handle: '.list-head',
@@ -318,25 +508,24 @@ function setupDragAndDrop(boardEl) {
     }
   });
 
-  // Cards are draggable within & between lists
   boardEl.querySelectorAll('.cards').forEach(cardsEl => {
     Sortable.create(cardsEl, {
       group: 'cards',
       animation: 180,
+      filter: '.virtual-parent, .parent-card',
       ghostClass: 'sortable-ghost',
       dragClass: 'sortable-drag',
       onEnd: async (evt) => {
         const toListEl = evt.to;
         const toListId = Number(toListEl.dataset.listId);
         const cardId = Number(evt.item.dataset.cardId);
-        const orderedIds = [...toListEl.querySelectorAll('.card')].map(el => Number(el.dataset.cardId));
+        const orderedIds = [...toListEl.querySelectorAll('.card:not(.virtual-parent):not(.parent-card)')].map(el => Number(el.dataset.cardId));
 
         const card = state.cards.find(c => c.id === cardId);
         if (card) card.list_id = toListId;
         orderedIds.forEach((id, i) => { const c = state.cards.find(x => x.id === id); if (c) c.position = i; });
 
         await api.moveCard(cardId, toListId, orderedIds);
-        // update counts without full re-render
         boardEl.querySelectorAll('.list').forEach(listEl => {
           const lid = Number(listEl.dataset.listId);
           const count = state.cards.filter(c => c.list_id === lid).length;
@@ -348,11 +537,19 @@ function setupDragAndDrop(boardEl) {
 }
 
 // ---------------- Actions ----------------
-function openCardById(id) {
+async function openCardById(id) {
   const card = state.cards.find(c => c.id === id);
   if (!card) return;
+  const cardLabels = getCardLabels(card.id);
+  let history = [];
+  try { history = await api.getCardHistory(card.id, 50) || []; } catch (e) { console.warn('history load failed', e); }
+
   openCardModal(card, {
     cards: state.cards,
+    labels: state.labels,
+    cardLabels,
+    history,
+    boardId: state.activeBoardId,
     onCreateSubtask: async () => {
       const sub = await persist(() => api.createCard(card.list_id, 'Subtask baru'));
       sub.parent_id = card.id;
@@ -364,12 +561,35 @@ function openCardById(id) {
     onSave: async (updated) => {
       await persist(() => api.updateCard(updated));
       Object.assign(card, updated);
+      // Refresh history so user sees their own change
+      try {
+        const fresh = await api.getCardHistory(card.id, 50);
+        const histEl = document.getElementById('cm-history');
+        if (histEl) histEl.innerHTML = (fresh || []).slice(0, 30).map(h => `
+          <div class="history-item">
+            <div class="history-icon">${historyIcon(h.action)}</div>
+            <div class="history-body">
+              <div class="history-line"><strong>${escapeHtml(h.username || 'Seseorang')}</strong> ${escapeHtml(describeAction(h.action, h.details || {}))}</div>
+              <div class="history-time">${escapeHtml(timeAgo(h.created_at))} • ${escapeHtml(new Date(h.created_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }))}</div>
+            </div>
+          </div>
+        `).join('') || '<div style="font-size:12px; color:var(--text-faint); padding: 6px 2px;">Belum ada aktivitas.</div>';
+      } catch {}
       renderContent();
     },
     onDelete: async (cardId) => {
       await persist(() => api.deleteCard(cardId));
       state.cards = state.cards.filter(c => c.id !== cardId);
       renderContent();
+    },
+    onLabelsChange: async (labelIds) => {
+      await api.setCardLabels(card.id, labelIds);
+      state.cardLabelsMap[String(card.id)] = state.labels.filter(l => labelIds.includes(Number(l.id)));
+    },
+    onCreateLabel: async (name, color) => {
+      const created = await api.createLabel(state.activeBoardId, name, color);
+      state.labels.push(created);
+      return created;
     }
   });
 }
@@ -391,6 +611,7 @@ function bindSidebar() {
     el.addEventListener('click', async (e) => {
       if (e.target.closest('[data-del-board]')) return;
       state.activeBoardId = Number(el.dataset.id);
+      state.view = 'board';
       await loadActiveBoard();
       render();
     });
@@ -400,9 +621,7 @@ function bindSidebar() {
   if (settingsEl) {
     settingsEl.onclick = async () => {
       state.view = 'settings';
-      if (state.user.role === 'admin') {
-        state.usersList = await api.getUsers();
-      }
+      state.usersListLoaded = false;
       render();
     };
   }
@@ -443,10 +662,79 @@ function bindTopbar() {
   });
 
   const searchEl = document.getElementById('search');
-  searchEl.addEventListener('input', () => {
-    state.search = searchEl.value;
-    renderContent();
-  });
+  if (searchEl) {
+    searchEl.addEventListener('input', () => {
+      state.search = searchEl.value;
+      renderContent();
+    });
+  }
+
+  const toggleBtn = document.getElementById('toggle-sidebar');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      state.sidebarCollapsed = !state.sidebarCollapsed;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('flowboard-sidebar-collapsed', state.sidebarCollapsed);
+      }
+      const sidebar = document.getElementById('sidebar');
+      if (sidebar) {
+        if (state.sidebarCollapsed) {
+          sidebar.classList.add('collapsed');
+        } else {
+          sidebar.classList.remove('collapsed');
+        }
+      }
+    });
+  }
+}
+
+function bindFilterBar() {
+  const fl = document.getElementById('filter-label');
+  const fp = document.getElementById('filter-priority');
+  const fd = document.getElementById('filter-due');
+  const fc = document.getElementById('filter-clear');
+  if (fl) fl.onchange = () => { state.filterLabelId = fl.value || null; renderContent(); };
+  if (fp) fp.onchange = () => { state.filterPriority = fp.value || ''; renderContent(); };
+  if (fd) fd.onchange = () => { state.filterDue = fd.value || ''; renderContent(); };
+  if (fc) fc.onclick = () => { state.filterLabelId = null; state.filterPriority = ''; state.filterDue = ''; renderContent(); };
+}
+
+// Reminder helper exports (used by openCardModal render path)
+function historyIcon(action) {
+  if (action === 'card.create') return '✨';
+  if (action === 'card.delete') return '🗑';
+  if (action === 'card.move') return '↔';
+  if (action === 'recurring.spawn') return '🔁';
+  return '✎';
+}
+function describeAction(action, details = {}) {
+  switch (action) {
+    case 'card.create': return 'membuat kartu';
+    case 'card.update': {
+      const fields = Object.keys(details);
+      if (!fields.length) return 'memperbarui kartu';
+      return `mengubah: ${fields.join(', ')}`;
+    }
+    case 'card.delete': return 'menghapus kartu';
+    case 'card.move': return 'memindahkan kartu antar kolom';
+    case 'recurring.spawn': return 'membuat occurrence berulang';
+    default: return action;
+  }
+}
+function timeAgo(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '';
+  const diff = Date.now() - t;
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return 'baru saja';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} menit lalu`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} jam lalu`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d} hari lalu`;
+  return new Date(iso).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
 }
 
 // ---------------- Reminder scheduler ----------------
@@ -454,12 +742,16 @@ function startReminderLoop() {
   setInterval(async () => {
     const now = Date.now();
     for (const c of state.cards) {
-      if (!c.due_at || c.completed || notified.has(c.id)) continue;
+      if (!c.due_at || c.completed) continue;
       const due = new Date(c.due_at).getTime();
-      // Fire when due time is within the last 60s window
-      if (due <= now && now - due < 60000) {
-        notified.add(c.id);
-        api.notify('⏰ FlowBoard — Jatuh tempo', c.title);
+      if (Number.isNaN(due)) continue;
+      const leadMin = [0, 5, 10, 30].includes(Number(c.reminder_minutes)) ? Number(c.reminder_minutes) : 0;
+      const fireAt = due - leadMin * 60000;
+      const key = `${c.id}:${leadMin}`;
+      if (!notified.has(key) && fireAt <= now && now - fireAt < 60000) {
+        notified.add(key);
+        const prefix = leadMin ? `${leadMin} menit lagi` : 'Jatuh tempo';
+        api.notify(`⏰ FlowBoard — ${prefix}`, c.title);
       }
     }
   }, 30000);
@@ -469,8 +761,8 @@ function startReminderLoop() {
 async function boot() {
   try {
     const status = await api.dbStatus();
-    state.dbMode = status.mode;
-  } catch { state.dbMode = 'local'; }
+    state.dbMode = status.mode || 'neon';
+  } catch { state.dbMode = 'neon'; }
 
   if (!state.user) {
     renderLogin();
@@ -481,6 +773,8 @@ async function boot() {
   await loadActiveBoard();
   render();
   startReminderLoop();
+  // Trigger recurring sweep on boot
+  api.runRecurring().catch(() => {});
 }
 
 function renderLogin() {
@@ -515,15 +809,14 @@ function renderLogin() {
 }
 
 function bindAuthEvents() {
-  let mode = 'login'; // 'login' | 'register'
+  let mode = 'login';
   const form = document.getElementById('auth-form');
   const titleEl = document.getElementById('auth-title');
   const errorEl = document.getElementById('auth-error');
   const submitBtn = document.getElementById('auth-submit');
-  const toggleLink = document.getElementById('auth-toggle-link');
   const switchEl = document.querySelector('.auth-switch');
 
-  toggleLink.onclick = (e) => {
+  document.getElementById('auth-toggle-link').onclick = (e) => {
     e.preventDefault();
     errorEl.classList.add('hidden');
     if (mode === 'login') {
@@ -537,7 +830,7 @@ function bindAuthEvents() {
       submitBtn.textContent = 'Masuk';
       switchEl.innerHTML = 'Belum punya akun? <a href="#" id="auth-toggle-link" style="color: var(--accent); font-weight: 600; text-decoration: none;">Daftar sekarang</a>';
     }
-    bindAuthEvents(); // rebind toggle
+    bindAuthEvents();
   };
 
   form.onsubmit = async (e) => {
@@ -583,11 +876,54 @@ function renderSettings(container) {
         <button class="btn btn-ghost" id="btn-logout" style="margin-top: 16px; color: var(--danger); border-color: rgba(239, 68, 68, 0.2)">Logout</button>
       </div>
 
+      <div class="settings-card" style="margin-top: 24px;">
+        <h2>🏷️ Manajemen Label</h2>
+        <p style="font-size:12.5px; color:var(--text-muted); margin-top: -4px;">Label dipakai untuk menandai kartu. 1 papan bisa punya banyak label, 1 kartu bisa punya banyak label.</p>
+        <form id="label-create-form" style="display:flex; gap: 8px; margin-bottom: 16px; align-items: flex-end; flex-wrap: wrap;">
+          <div class="field" style="margin-bottom:0; flex:1; min-width: 160px;">
+            <label style="font-size:11px; margin-bottom:4px; display:block; color:var(--text-muted)">Papan</label>
+            <select id="lc-board" style="width:100%; padding: 8px 12px; font-size:13px; background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-md); color:var(--text); outline:none;">
+              ${state.boards.map(b => `<option value="${b.id}" ${b.id === state.activeBoardId ? 'selected' : ''}>${escapeHtml(b.title)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0; flex:1; min-width: 160px;">
+            <label style="font-size:11px; margin-bottom:4px; display:block; color:var(--text-muted)">Nama Label</label>
+            <input id="lc-name" type="text" placeholder="mis. Mendesak" required style="width:100%; padding: 8px 12px; font-size:13px; background:var(--bg-surface-2); border:1px solid var(--border); border-radius:var(--r-md); color:var(--text); outline:none;" />
+          </div>
+          <div class="field" style="margin-bottom:0; width: 80px;">
+            <label style="font-size:11px; margin-bottom:4px; display:block; color:var(--text-muted)">Warna</label>
+            <input id="lc-color" type="color" value="#6366f1" style="width:100%; height:36px; padding:0; border:1px solid var(--border); border-radius:var(--r-md); background:transparent; cursor:pointer;" />
+          </div>
+          <button type="submit" class="btn btn-primary" style="padding: 0 16px; font-size:13px; height: 36px; display:flex; align-items:center; justify-content:center;">+ Buat</button>
+        </form>
+
+        <div id="label-list">
+          ${state.boards.map(b => {
+            const labelsForBoard = state.labels.filter(l => Number(l.board_id) === Number(b.id));
+            if (!labelsForBoard.length) return '';
+            return `
+              <div style="margin-bottom: 12px;">
+                <div style="font-size:12px; color: var(--text-faint); margin-bottom: 6px;">${escapeHtml(b.title)}</div>
+                <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                  ${labelsForBoard.map(l => `
+                    <span class="label-chip on" style="--lc:${l.color}; position: relative;" data-label-id="${l.id}" data-board-id="${b.id}">
+                      <span class="dot"></span>
+                      <span>${escapeHtml(l.name)}</span>
+                      <button type="button" class="label-del" data-del-label="${l.id}" title="Hapus label" style="background:none; border:none; color:var(--text-faint); cursor:pointer; margin-left:4px; font-size:14px; line-height:1;">×</button>
+                    </span>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+          }).join('') || '<div style="font-size:12px; color:var(--text-faint);">Belum ada label. Buat di atas.</div>'}
+        </div>
+      </div>
+
       ${isAdmin ? `
       <div class="settings-card" style="margin-top: 24px;">
         <h2>Manajemen Pengguna (Super Admin)</h2>
         <div id="users-error" class="auth-error hidden" style="color: var(--danger); background: rgba(239,68,68,0.08); padding: 10px 12px; border-radius: var(--r-md); font-size:12.5px; font-weight:600; margin-bottom: 16px; border: 1px solid rgba(239,68,68,0.18)"></div>
-        
+
         <form id="admin-create-user-form" style="display:flex; gap: 8px; margin-bottom: 20px; align-items: flex-end;">
           <div class="field" style="margin-bottom:0; flex:1;">
             <label style="font-size:11px; margin-bottom:4px; display:block; color:var(--text-muted)">Username</label>
@@ -622,12 +958,11 @@ function renderSettings(container) {
                 const isSelf = u.username === state.user.username;
                 const statusText = u.approved ? '<span style="color:var(--success);font-weight:600;">Aktif</span>' : '<span style="color:var(--warning);font-weight:600;">Pending</span>';
                 const actionButton = isSelf ? '' : (
-                  u.approved 
+                  u.approved
                     ? `<button class="btn btn-ghost" style="padding: 4px 8px; font-size: 11px; border-color: rgba(245,158,11,0.2); color:var(--warning);" data-toggle-approve="${u.id}" data-approved="false">Suspen</button>`
                     : `<button class="btn btn-ghost" style="padding: 4px 8px; font-size: 11px; border-color: rgba(16,185,129,0.2); color:var(--success);" data-toggle-approve="${u.id}" data-approved="true">Setujui</button>`
                 );
                 const deleteButton = isSelf ? '' : `<button class="btn btn-ghost" style="padding: 4px 8px; font-size: 11px; border-color: rgba(239,68,68,0.2); color:var(--danger); margin-left: 4px;" data-delete-user="${u.id}">Hapus</button>`;
-                
                 return `
                   <tr style="border-bottom:1px solid var(--border);">
                     <td style="padding: 10px 12px;"><strong>${escapeHtml(u.username)}</strong> ${isSelf ? '<small style="color:var(--text-faint)">(Anda)</small>' : ''}</td>
@@ -645,20 +980,133 @@ function renderSettings(container) {
         </div>
       </div>
       ` : ''}
+
+      <div class="settings-card" style="margin-top: 24px;">
+        <h2>💾 Backup & Restore</h2>
+        <p style="font-size:12.5px; color:var(--text-muted); margin-top: -4px;">Export seluruh data ke file JSON, atau import dari backup. Data user (password) tidak ikut demi keamanan.</p>
+        <div style="display:flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" id="btn-export" class="btn btn-primary" style="padding: 0 16px; font-size:13px; height: 36px;">⬇ Export JSON</button>
+          <label class="btn btn-ghost" style="padding: 0 16px; font-size:13px; height: 36px; display:inline-flex; align-items:center; cursor:pointer;">
+            ⬆ Import JSON
+            <input id="file-import" type="file" accept="application/json" style="display:none;" />
+          </label>
+        </div>
+        <div id="backup-msg" style="font-size:12px; color:var(--text-muted); margin-top: 8px;"></div>
+      </div>
+
+      <div class="settings-card" style="margin-top: 24px;">
+        <h2>📚 Panduan & Fitur Aplikasi (FlowBoard)</h2>
+        <div class="app-guide" style="font-size: 13.5px; line-height: 1.6; color: var(--text-muted); display: flex; flex-direction: column; gap: 16px;">
+          <div class="guide-section">
+            <h3 style="color: var(--text-strong); font-size: 14.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">🏷️ Label & Filter</h3>
+            <p style="margin:0;">Buka menu <strong>Pengaturan</strong> untuk membuat label per papan (nama + warna). Buka kartu dan centang label yang relevan. Di papan, gunakan <strong>Filter Bar</strong> di atas kolom untuk menyaring kartu berdasarkan label, prioritas, atau tenggat.</p>
+          </div>
+          <div class="guide-section">
+            <h3 style="color: var(--text-strong); font-size: 14.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">🔁 Pengulangan Otomatis</h3>
+            <p style="margin:0;">Buka kartu → expand <strong>Pengulangan Otomatis</strong>. Pilih harian / mingguan / bulanan, set due date, dan sistem akan otomatis spawn kartu baru saat due tiba. Label & warna template diwariskan ke occurrence.</p>
+          </div>
+          <div class="guide-section">
+            <h3 style="color: var(--text-strong); font-size: 14.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">📜 Riwayat Aktivitas</h3>
+            <p style="margin:0;">Setiap perubahan kartu (judul, due, status, perpindahan kolom) tercatat otomatis. Buka kartu → scroll ke bawah untuk melihat log siapa ngapain kapan.</p>
+          </div>
+          <div class="guide-section">
+            <h3 style="color: var(--text-strong); font-size: 14.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">🗂️ Kanban & Struktur WBS (Parent-Child)</h3>
+            <p style="margin:0;">Buat <strong>Pekerjaan Induk</strong> dari tombol kolom, lalu klik kartu untuk membuka modal dan klik <strong>+ Subtask</strong>. Progres subtask (seperti 1/3 selesai) otomatis terhitung.</p>
+          </div>
+          <div class="guide-section">
+            <h3 style="color: var(--text-strong); font-size: 14.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">🔒 Pendaftaran & Approval Akun</h3>
+            <p style="margin:0;">Akun baru berstatus <strong>Pending</strong>. Super Admin wajib menyetujui dari menu Pengaturan.</p>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
-  // Bind settings page buttons
   container.querySelector('#btn-logout').onclick = () => {
     localStorage.removeItem('flowboard-user');
     state.user = null;
     boot();
   };
 
+  // Label creation
+  container.querySelector('#label-create-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const boardId = Number(container.querySelector('#lc-board').value);
+    const name = container.querySelector('#lc-name').value.trim();
+    const color = container.querySelector('#lc-color').value;
+    if (!name) return;
+    try {
+      const created = await api.createLabel(boardId, name, color);
+      // Add to local state
+      const existing = state.labels.find(l => Number(l.board_id) === Number(boardId) && l.name === created.name);
+      if (!existing) state.labels.push(created);
+      // Switch to that board to make label visible
+      state.activeBoardId = boardId;
+      await loadActiveBoard();
+      renderContent();
+      renderSettings(container);
+    } catch (err) {
+      alert('Gagal membuat label: ' + err.message);
+    }
+  };
+
+  // Delete label
+  container.querySelectorAll('[data-del-label]').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.delLabel);
+      if (!confirm('Hapus label ini? Kartu yang punya label ini akan kehilangan labelnya.')) return;
+      try {
+        await api.deleteLabel(id);
+        state.labels = state.labels.filter(l => Number(l.id) !== id);
+        // Clean card labels cache
+        for (const key of Object.keys(state.cardLabelsMap)) {
+          state.cardLabelsMap[key] = state.cardLabelsMap[key].filter(l => Number(l.id) !== id);
+        }
+        renderContent();
+        renderSettings(container);
+      } catch (err) {
+        alert('Gagal: ' + err.message);
+      }
+    };
+  });
+
+  // Export / Import
+  const backupMsg = container.querySelector('#backup-msg');
+  container.querySelector('#btn-export').onclick = async () => {
+    try {
+      const data = await api.exportAll();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `flowboard-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      backupMsg.textContent = `✓ Export sukses: ${data.boards.length} papan, ${data.cards.length} kartu, ${data.labels.length} label.`;
+    } catch (err) {
+      backupMsg.textContent = '✗ Gagal export: ' + err.message;
+    }
+  };
+  container.querySelector('#file-import').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!confirm('Import akan menimpa data yang ada. Lanjutkan?')) { e.target.value = ''; return; }
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const res = await api.importAll(payload);
+      backupMsg.textContent = `✓ Import sukses: ${JSON.stringify(res.counts)}`;
+      await loadActiveBoard();
+      renderSettings(container);
+    } catch (err) {
+      backupMsg.textContent = '✗ Gagal import: ' + err.message;
+    }
+    e.target.value = '';
+  };
+
   if (isAdmin) {
     const errorEl = container.querySelector('#users-error');
-    
-    // Create user
     container.querySelector('#admin-create-user-form').onsubmit = async (e) => {
       e.preventDefault();
       errorEl.classList.add('hidden');
@@ -670,14 +1118,12 @@ function renderSettings(container) {
         uEl.value = '';
         pEl.value = '';
         state.usersList = await api.getUsers();
-        renderContent();
+        renderSettings(container);
       } catch (err) {
         errorEl.textContent = err.message;
         errorEl.classList.remove('hidden');
       }
     };
-
-    // Toggle approval
     container.querySelectorAll('[data-toggle-approve]').forEach(btn => {
       btn.onclick = async () => {
         const id = Number(btn.dataset.toggleApprove);
@@ -685,14 +1131,12 @@ function renderSettings(container) {
         try {
           await api.approveUser(id, approved);
           state.usersList = await api.getUsers();
-          renderContent();
+          renderSettings(container);
         } catch (err) {
           alert('Gagal mengubah status: ' + err.message);
         }
       };
     });
-
-    // Delete user
     container.querySelectorAll('[data-delete-user]').forEach(btn => {
       btn.onclick = async () => {
         const id = Number(btn.dataset.deleteUser);
@@ -700,7 +1144,7 @@ function renderSettings(container) {
           try {
             await api.deleteUser(id);
             state.usersList = await api.getUsers();
-            renderContent();
+            renderSettings(container);
           } catch (err) {
             alert('Gagal menghapus pengguna: ' + err.message);
           }

@@ -3,19 +3,16 @@ import { escapeHtml } from '../utils.js';
 
 const DOW = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
 const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-
 let viewYear, viewMonth;
 
-export function renderCalendar(container, cards, onEventClick) {
+export function renderCalendar(container, cards, onEventClick, onEventMove) {
   const today = new Date();
   if (viewYear === undefined) { viewYear = today.getFullYear(); viewMonth = today.getMonth(); }
-
   const first = new Date(viewYear, viewMonth, 1);
   const startDay = first.getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const daysPrev = new Date(viewYear, viewMonth, 0).getDate();
 
-  // Group cards by yyyy-mm-dd
   const byDate = {};
   for (const c of cards) {
     if (!c.due_at) continue;
@@ -26,13 +23,19 @@ export function renderCalendar(container, cards, onEventClick) {
   }
 
   const cells = [];
-  for (let i = 0; i < startDay; i++) {
-    cells.push({ day: daysPrev - startDay + i + 1, other: true, month: viewMonth - 1 });
-  }
+  for (let i = 0; i < startDay; i++) cells.push({ day: daysPrev - startDay + i + 1, other: true, month: viewMonth - 1 });
   for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, other: false, month: viewMonth });
   while (cells.length % 7 !== 0) cells.push({ day: cells.length - (startDay + daysInMonth) + 1, other: true, month: viewMonth + 1 });
 
-  const isToday = (day, other) => !other && day === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
+  const fullDate = (cell) => new Date(viewYear, cell.month, cell.day);
+  const dateKey = (cell) => {
+    const d = fullDate(cell);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  };
+  const isToday = (cell) => {
+    const d = fullDate(cell);
+    return d.toDateString() === today.toDateString();
+  };
 
   container.innerHTML = `
     <div class="cal-header">
@@ -46,26 +49,35 @@ export function renderCalendar(container, cards, onEventClick) {
     <div class="cal-grid">
       ${DOW.map(d => `<div class="cal-dow">${d}</div>`).join('')}
       ${cells.map(cell => {
-        const key = `${viewYear}-${cell.month}-${cell.day}`;
+        const key = dateKey(cell);
         const evts = byDate[key] || [];
+        const d = fullDate(cell);
+        const isoDay = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         return `
-          <div class="cal-cell ${cell.other ? 'other' : ''} ${isToday(cell.day, cell.other) ? 'today' : ''}">
+          <div class="cal-cell ${cell.other ? 'other' : ''} ${isToday(cell) ? 'today' : ''}" data-date="${isoDay}">
             <div class="cal-date">${cell.day}</div>
             ${evts.slice(0, 4).map(c => `
-              <div class="cal-event" data-id="${c.id}" style="background:${c.color || 'var(--accent)'};${c.completed ? 'opacity:0.5;text-decoration:line-through;' : ''}">
-                ${escapeHtml(c.title)}
-              </div>`).join('')}
+              <div class="cal-event" draggable="true" data-id="${c.id}" style="background:${c.color || 'var(--accent)'};${c.completed ? 'opacity:0.5;text-decoration:line-through;' : ''}">${escapeHtml(c.title)}</div>`).join('')}
             ${evts.length > 4 ? `<div class="cal-date" style="font-size:11px">+${evts.length - 4} lagi</div>` : ''}
           </div>`;
       }).join('')}
     </div>
   `;
 
-  container.querySelector('#cal-prev').onclick = () => { viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } renderCalendar(container, cards, onEventClick); };
-  container.querySelector('#cal-next').onclick = () => { viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } renderCalendar(container, cards, onEventClick); };
-  container.querySelector('#cal-today').onclick = () => { viewYear = today.getFullYear(); viewMonth = today.getMonth(); renderCalendar(container, cards, onEventClick); };
-
+  container.querySelector('#cal-prev').onclick = () => { viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } renderCalendar(container, cards, onEventClick, onEventMove); };
+  container.querySelector('#cal-next').onclick = () => { viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } renderCalendar(container, cards, onEventClick, onEventMove); };
+  container.querySelector('#cal-today').onclick = () => { viewYear = today.getFullYear(); viewMonth = today.getMonth(); renderCalendar(container, cards, onEventClick, onEventMove); };
   container.querySelectorAll('.cal-event').forEach(el => {
     el.onclick = () => onEventClick(Number(el.dataset.id));
+    el.ondragstart = (e) => { e.dataTransfer.setData('text/plain', el.dataset.id); };
+  });
+  container.querySelectorAll('.cal-cell').forEach(cell => {
+    cell.ondragover = (e) => e.preventDefault();
+    cell.ondrop = async (e) => {
+      e.preventDefault();
+      const cardId = Number(e.dataTransfer.getData('text/plain'));
+      if (!cardId || typeof onEventMove !== 'function') return;
+      await onEventMove(cardId, cell.dataset.date);
+    };
   });
 }
