@@ -6,7 +6,7 @@ export default defineConfig({
   base: './',
   plugins: [neonApiPlugin()],
   server: {
-    port: 5173,
+    port: 5180,
     strictPort: true
   },
   build: {

@@ -10,6 +10,22 @@ let ready;
 async function init() {
   if (!process.env.NEON_DATABASE_URL) throw new Error('NEON_DATABASE_URL missing');
   sql = neon(process.env.NEON_DATABASE_URL);
+
+  try {
+    const check = await sql(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'card_history'
+      )
+    `);
+    if (check[0] && check[0].exists) {
+      return;
+    }
+  } catch (e) {
+    console.warn('[api] Schema check failed, running migration:', e.message);
+  }
+
   const schema = fs.readFileSync(path.join(process.cwd(), 'electron', 'schema.sql'), 'utf-8');
   for (const stmt of schema.split(';').map(s => s.trim()).filter(Boolean)) await sql(stmt);
   const rows = await sql('SELECT COUNT(*)::int AS c FROM boards');
@@ -181,6 +197,7 @@ const handlers = {
 
   // Card-label associations
   'cards:labels': async ({ cardId }) => sql('SELECT l.* FROM labels l JOIN card_labels cl ON cl.label_id = l.id WHERE cl.card_id=$1 ORDER BY l.name', [cardId]),
+  'boards:cards:labels': async ({ boardId }) => sql('SELECT cl.card_id, l.* FROM labels l JOIN card_labels cl ON cl.label_id = l.id WHERE l.board_id=$1 ORDER BY l.name', [boardId]),
   'cards:labels:set': async ({ cardId, labelIds }) => {
     const ids = (Array.isArray(labelIds) ? labelIds : []).map(Number).filter(Number.isInteger);
     await sql('DELETE FROM card_labels WHERE card_id=$1', [cardId]);

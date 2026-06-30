@@ -435,6 +435,16 @@ async function registerIpcHandlers(ipcMain, getWindow) {
     );
   });
 
+  ipcMain.handle('boards:cards:labels', async (_e, { boardId }) => {
+    return await db.sql(
+      `SELECT cl.card_id, l.* FROM labels l 
+       JOIN card_labels cl ON cl.label_id = l.id 
+       WHERE l.board_id = $1 
+       ORDER BY l.name`,
+      [boardId]
+    );
+  });
+
   ipcMain.handle('cards:labels:set', async (_e, { cardId, labelIds }) => {
     const ids = (Array.isArray(labelIds) ? labelIds : []).map(Number).filter(Number.isInteger);
     await db.sql('DELETE FROM card_labels WHERE card_id=$1', [cardId]);

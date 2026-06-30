@@ -63,6 +63,22 @@ async function init(userDataDir) {
 }
 
 async function migrate() {
+  try {
+    const check = await sql(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'card_history'
+      )
+    `);
+    if (check[0] && check[0].exists) {
+      console.log('[db] Schema already exists, skipping migration');
+      return;
+    }
+  } catch (e) {
+    console.warn('[db] Schema check failed, running migration:', e.message);
+  }
+
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
   // neon() can't run multiple statements in one call; split on semicolons.
   const statements = schema.split(';').map(s => s.trim()).filter(Boolean);

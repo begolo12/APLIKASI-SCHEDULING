@@ -9,7 +9,7 @@
     "dev": "npm run dev:repair-electron && concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:repair-electron": "node scripts/repair-electron.js",
     "dev:vite": "vite",
-    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "dev:electron": "wait-on tcp:5180 && cross-env NODE_ENV=development electron .",
     "db:check": "node scripts/check-db.js",
     "test": "node --no-warnings tests/helpers.test.js",
     "build": "vite build",

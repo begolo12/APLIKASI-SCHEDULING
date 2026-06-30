@@ -40,23 +40,35 @@ async function loadBoards() {
 
 async function loadActiveBoard() {
   if (!state.activeBoardId) { state.lists = []; state.cards = []; state.labels = []; state.cardLabelsMap = {}; return; }
-  const [lists, cards, labels] = await Promise.all([
+  const [lists, cards, labels, cardLabels] = await Promise.all([
     api.getLists(state.activeBoardId),
     api.getCards(state.activeBoardId),
-    api.getLabels(state.activeBoardId)
+    api.getLabels(state.activeBoardId),
+    api.getBoardsCardsLabels(state.activeBoardId).catch(() => [])
   ]);
   state.lists = lists;
   state.cards = cards;
   state.labels = labels || [];
 
-  // Load card-label associations in parallel
+  // Map card-label associations from batch result
   const labelMap = {};
-  await Promise.all(state.cards.map(async c => {
-    try {
-      const cls = await api.getCardLabels(c.id);
-      labelMap[String(c.id)] = cls || [];
-    } catch { labelMap[String(c.id)] = []; }
-  }));
+  for (const c of cards) {
+    labelMap[String(c.id)] = [];
+  }
+  if (Array.isArray(cardLabels)) {
+    for (const r of cardLabels) {
+      const cid = String(r.card_id);
+      if (labelMap[cid]) {
+        labelMap[cid].push({
+          id: r.id,
+          board_id: r.board_id,
+          name: r.name,
+          color: r.color,
+          created_at: r.created_at
+        });
+      }
+    }
+  }
   state.cardLabelsMap = labelMap;
 }
 
@@ -285,10 +297,19 @@ function renderContent() {
     renderCalendar(content, applyFilters(state.cards), openCardById, async (cardId, isoDate) => {
       const card = state.cards.find(c => Number(c.id) === Number(cardId));
       if (!card) return;
-      const prev = card.due_at ? new Date(card.due_at) : new Date();
+
+      const prevDue = card.due_at ? new Date(card.due_at) : new Date();
+      const prevStart = card.start_at ? new Date(card.start_at) : null;
       const [y, m, d] = isoDate.split('-').map(Number);
-      const next = new Date(y, m - 1, d, prev.getHours(), prev.getMinutes());
-      card.due_at = next.toISOString();
+      const nextDue = new Date(y, m - 1, d, prevDue.getHours(), prevDue.getMinutes());
+
+      if (prevStart) {
+        const durationMs = prevDue.getTime() - prevStart.getTime();
+        const nextStart = new Date(nextDue.getTime() - durationMs);
+        card.start_at = nextStart.toISOString();
+      }
+
+      card.due_at = nextDue.toISOString();
       await api.updateCard(card);
       renderContent();
     });
@@ -759,6 +780,47 @@ function startReminderLoop() {
 
 // ---------------- Boot ----------------
 async function boot() {
+  // Tampilkan layar loading awal agar tidak ada black screen
+  const appEl = document.getElementById('app');
+  if (appEl) {
+    appEl.innerHTML = `
+      <div style="
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        background-color: #0f1117;
+        color: #f3f4f6;
+        font-family: 'Outfit', sans-serif;
+      ">
+        <div style="font-size: 64px; margin-bottom: 20px; animation: pulse 2s infinite ease-in-out;">🗂️</div>
+        <div style="font-size: 24px; font-weight: 700; letter-spacing: -0.025em; margin-bottom: 8px;">Flow<span style="color: #6366f1;">Board</span></div>
+        <div style="font-size: 13px; color: #9ca3af; display: flex; align-items: center; gap: 8px;">
+          <span style="
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #6366f1;
+            animation: bounce 1.4s infinite ease-in-out both;
+          "></span>
+          Menghubungkan ke database...
+        </div>
+      </div>
+      <style>
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.1); opacity: 0.8; }
+        }
+        @keyframes bounce {
+          0%, 80%, 100% { transform: scale(0); }
+          40% { transform: scale(1.0); }
+        }
+      </style>
+    `;
+  }
+
   try {
     const status = await api.dbStatus();
     state.dbMode = status.mode || 'neon';

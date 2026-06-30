@@ -58,6 +58,7 @@ function createHttpApi() {
 
     // Card labels
     getCardLabels: (cardId) => call('cards:labels', { cardId }),
+    getBoardsCardsLabels: (boardId) => call('boards:cards:labels', { boardId }),
     setCardLabels: (cardId, labelIds) => call('cards:labels:set', { cardId, labelIds }),
 
     // History
