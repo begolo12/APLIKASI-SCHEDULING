@@ -769,12 +769,32 @@ async function boot() {
     return;
   }
 
-  await loadBoards();
-  await loadActiveBoard();
-  render();
-  startReminderLoop();
-  // Trigger recurring sweep on boot
-  api.runRecurring().catch(() => {});
+  try {
+    await loadBoards();
+    await loadActiveBoard();
+    render();
+    startReminderLoop();
+    api.runRecurring().catch(() => {});
+  } catch (err) {
+    console.error('Boot error:', err);
+    app.innerHTML = `
+      <div class="login-wrapper">
+        <div class="login-card" style="text-align: center; max-width: 480px;">
+          <div style="font-size: 48px; margin-bottom: 16px;">⚠️</div>
+          <h2 style="color: var(--text-strong); font-size: 20px; font-weight: 700; margin-bottom: 12px;">Koneksi Database Gagal</h2>
+          <p style="color: var(--text-muted); font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+            Aplikasi tidak dapat terhubung ke database cloud Neon Postgres di Vercel.
+          </p>
+          <div style="color: var(--danger); background: rgba(239,68,68,0.08); padding: 12px; border-radius: var(--r-md); font-size: 13px; font-family: monospace; border: 1px solid rgba(239,68,68,0.18); text-align: left; margin-bottom: 24px; word-break: break-all;">
+            ${escapeHtml(err.message || err)}
+          </div>
+          <button class="btn btn-primary" onclick="localStorage.removeItem('flowboard-user'); location.reload();" style="width: 100%;">
+            Keluar & Kembali ke Login
+          </button>
+        </div>
+      </div>
+    `;
+  }
 }
 
 function renderLogin() {
