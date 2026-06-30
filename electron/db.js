@@ -3,7 +3,34 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const { app } = require('electron');
+
+// Load environment variables from multiple possible locations:
+// 1. process.cwd() (development)
+// 2. app.getPath('userData') (C:\Users\...\AppData\Roaming\flowboard)
+// 3. next to the executable (portable style)
+function loadEnv(userDataDir) {
+  dotenv.config({ path: path.join(process.cwd(), '.env') });
+  
+  if (userDataDir && fs.existsSync(path.join(userDataDir, '.env'))) {
+    dotenv.config({ path: path.join(userDataDir, '.env'), override: true });
+  } else if (app) {
+    try {
+      const userDataEnv = path.join(app.getPath('userData'), '.env');
+      if (fs.existsSync(userDataEnv)) {
+        dotenv.config({ path: userDataEnv, override: true });
+      }
+    } catch (e) {}
+  }
+  
+  if (process.execPath) {
+    const exeEnv = path.join(path.dirname(process.execPath), '.env');
+    if (fs.existsSync(exeEnv)) {
+      dotenv.config({ path: exeEnv, override: true });
+    }
+  }
+}
 
 let sql = null;       // neon tagged-template client
 let mode = 'neon';
@@ -13,11 +40,16 @@ function hashPassword(password) {
 }
 
 async function init(userDataDir) {
+  loadEnv(userDataDir);
   const url = process.env.NEON_DATABASE_URL;
   if (!url || !url.startsWith('postgres')) {
+    const targetPath = userDataDir || (app ? app.getPath('userData') : '');
     throw new Error(
-      'NEON_DATABASE_URL belum diset. Tambahkan credential Neon di .env (lihat .env.example). ' +
-      'FlowBoard butuh koneksi Neon untuk jalan.'
+      'Kredensial database (NEON_DATABASE_URL) tidak ditemukan!\n\n' +
+      'Silakan buat file ".env" dan isi dengan connection string Neon Anda, lalu letakkan di:\n' +
+      `-> ${path.join(targetPath, '.env')}\n\n` +
+      'Format isi file .env:\n' +
+      'NEON_DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/dbname?sslmode=require'
     );
   }
   const { neon } = require('@neondatabase/serverless');

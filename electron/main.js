@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, nativeImage, dialog } = require('electron');
 const path = require('path');
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -61,9 +61,19 @@ function createTray() {
 }
 
 app.whenReady().then(async () => {
-  await require('./ipc').registerIpcHandlers(ipcMain, () => mainWindow);
-  createWindow();
-  try { createTray(); } catch (e) { console.warn('Tray init failed:', e.message); }
+  try {
+    await require('./ipc').registerIpcHandlers(ipcMain, () => mainWindow);
+    createWindow();
+    try { createTray(); } catch (e) { console.warn('Tray init failed:', e.message); }
+  } catch (err) {
+    dialog.showErrorBox(
+      'Inisialisasi FlowBoard Gagal',
+      err.message || String(err)
+    );
+    app.isQuitting = true;
+    app.quit();
+    return;
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
